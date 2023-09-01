@@ -9,13 +9,26 @@ This will create another channel specific to the newly created ticket, where the
 import discord
 from discord.ext import commands
 from discord.ui import View
-
-from token import token
+import json
+import os
 
 # Set intents
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 bot.remove_command("help")  # Remove the default help command
+
+
+# Obtenez le chemin absolu du répertoire du script
+script_directory = os.path.dirname(os.path.abspath(__file__))
+file_res_path = os.path.join(script_directory, "interactions.json")
+
+# Chargement des données d'interaction depuis un fichier JSON au démarrage du bot
+print(f"initial load of interactions")
+try:
+    with open("interactions.json", "r") as file:
+        interactions_data = json.load(file)
+except FileNotFoundError:
+    interactions_data = []
 
 # class used to display buttons in new ticket message
 class TicketView(View):
@@ -36,14 +49,19 @@ class TicketView(View):
         if isinstance(interaction.channel, discord.TextChannel) and "ticket" in interaction.channel.name:
             # Delete channel
             await interaction.channel.delete()
-            await interaction.response.send_message("Ticket closed.", ephemeral=True)  # Sending a response
         else:
             # Not right channel
             await interaction.response.send_message("This button can only be used in ticket channels.", ephemeral=True)
 
+        save_interactions_data()
 
 # class used to display buttons in create ticket message with the function executed
 class CreateTicketView(View):
+
+    buttons_data = {
+        "Ticket Silex": {"type": "pipeline", "function_name": "first_button_callback"},
+        "Ticket Farm": {"type": "farm", "function_name": "second_button_callback"}
+    }
 
     @discord.ui.button(label="Ticket Silex", style=discord.ButtonStyle.green, emoji = "🪨") 
     async def first_button_callback(self, button, interaction):
@@ -51,10 +69,10 @@ class CreateTicketView(View):
         Button "Ticket Silex". Execute function self.create_ticket with type="pipeline" when pushed.
         '''
         user_mention = button.user.mention
+        user_id = button.user.id
         td = discord.utils.get(button.guild.roles, name="Technical Director")
         td_mention = td.mention
-        await self.create_ticket("pipeline", user_mention, td_mention)
-        await button.response.defer()
+        await self.create_ticket("pipeline", user_mention, user_id, td_mention)
 
     @discord.ui.button(label="Ticket Farm", style=discord.ButtonStyle.secondary, emoji="🖥️")
     async def second_button_callback(self, button, interaction):
@@ -62,17 +80,19 @@ class CreateTicketView(View):
         button "Ticket Farm". Execute function self.create_ticket with type="farm" when pushed.
         '''
         user_mention = button.user.mention
+        user_id = button.user.id
         td = discord.utils.get(button.guild.roles, name="Technical Director")
         td_mention = td.mention
-        await self.create_ticket("farm", user_mention, td_mention)
+        await self.create_ticket("farm", user_mention, user_id, td_mention)
 
 
-    async def create_ticket(self, type, user_mention, td_mention):
+    async def create_ticket(self, type, user_mention, user_id, td_mention):
+
         # Get category "HELP Pipeline/Renderfarm". Create it if not found.
         category = discord.utils.get(bot.guilds[0].categories, name="HELP Pipeline/Renderfarm")
         if not category:
             category = await bot.guilds[0].create_category("HELP Pipeline/Renderfarm")
-        
+
         # Find or create the next ticket number.
         ticket_number = 1
         while discord.utils.get(category.channels, name=f"{type}-ticket-{ticket_number:03}"):
@@ -102,6 +122,30 @@ class CreateTicketView(View):
     """
         view = TicketView()
         await ticket_channel.send(message_content, view=view)
+
+        button_info = self.buttons_data[self.children[0].label]  # Utilisez self.children[0] au lieu de self.view.children[0]
+        print(f"interaction in create ticket before append = {interactions_data}")
+        interactions_data.append({
+            "type": button_info["type"],
+            "function_name": button_info["function_name"],
+            "user_id": user_id,
+            "user_mention": user_mention,
+            "td_mention": td_mention,
+            "channel_name": channel_name
+        })
+        print(f"after = {interactions_data}")
+        save_interactions_data()
+
+# Fonction pour sauvegarder les données d'interaction dans un fichier JSON
+def save_interactions_data(interactions_data=None):
+    print(f"interactions to save : {interactions_data}")
+
+    try:
+        with open(file_res_path, 'w') as output_file:
+            content = json.dumps(interactions_data, indent=4)
+            output_file.write(content)
+    except Exception as e:
+        print(f"An error occurred while saving data: {e}")
 
 @bot.event
 async def on_ready():
@@ -135,8 +179,22 @@ async def on_ready():
         await category.create_text_channel("create-ticket", overwrites=overwrites)
         ticket_channel = discord.utils.get(category.channels, name="create-ticket")
 
-        # Déplace le channel "create-ticket" vers le haut de la liste des channels dans la catégorie
-        await ticket_channel.edit(position=0)
+    # Charger les interactions à partir du fichier JSON
+    try:
+        with open(file_res_path, "r") as file:
+            interactions_data = json.load(file)
+    except FileNotFoundError:
+        interactions_data = []
+
+    # Configurer les boutons avec les interactions chargées
+    ticket_view = CreateTicketView()
+    for interaction in interactions_data:
+        button_type = interaction["type"]
+        function_name = CreateTicketView.buttons_data[button_type]["function_name"]
+        function = getattr(ticket_view, function_name)
+
+        ticket_view.children[0].label = button_type
+        ticket_view.children[0].callback = function
 
     # If channel create-ticket is empty, send first message.
     async for message in ticket_channel.history(limit=1):
@@ -160,5 +218,24 @@ If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.
         view = CreateTicketView()
         await ticket_channel.send(content=message_content, view=view)
 
+        # Initial interactions for "Ticket Silex" and "Ticket Farm"
+        interactions_data.append({
+            "type": "pipeline",  # type for "Ticket Silex"
+            "user_id": None,
+            "user_mention": None,
+            "td_mention": None,
+            "channel_name": None
+        })
+        interactions_data.append({
+            "type": "farm",  # type for "Ticket Farm"
+            "user_id": None,
+            "user_mention": None,
+            "td_mention": None,
+            "channel_name": None
+        })
+
+        print(f"before save, data = {interactions_data}")
+        save_interactions_data(interactions_data)
+
 # Replace "YOUR_TOKEN_HERE" by the token you copy from discord development website
-bot.run(token)
+bot.run('MTE0Mzk4NDI2NjEyOTE5MDk4Mw.GOryrP.PmOJnyAwJYciu5dTcFYOvWlAmt9uy2Q02OLebU')
