@@ -46,8 +46,8 @@ class PersistentViewBot(commands.Bot):
         ticket_channel = discord.utils.get(category.channels, name="create-ticket")
         if not ticket_channel:
             overwrites = {
-                bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=False),
-                bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False), # Every role can read messages but not send_messages
+                bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True), # Bot can read and send messages
             }
             await category.create_text_channel("create-ticket", overwrites=overwrites)
             ticket_channel = discord.utils.get(category.channels, name="create-ticket")
@@ -57,23 +57,24 @@ class PersistentViewBot(commands.Bot):
             break
         else:
             message_content = f"""
-    [FR]🥖
-    Bonjour. Si tu as un problème avec Silex ou la Renderfarm, tu peux créer un ticket qui contactera automatiquement la team {td_role_mention}.
-    Clique sur le bouton "ticket Silex" si le problème est sur Silex.
-    Clique sur le bouton "ticket Farm" si le problème a lieu sur la Renderfarm.
+[FR]🥖
+Bonjour. Si tu as un problème avec Silex ou la Renderfarm, tu peux créer un ticket qui contactera automatiquement la team {td_role_mention}.
+Clique sur le bouton "ticket Silex" si le problème est sur Silex.
+Clique sur le bouton "ticket Farm" si le problème a lieu sur la Renderfarm.
 
-    Si le bot ne fonctionne pas, adresse ton problème à cette adresse mail : 5-td-mtp@artfx.fr
+Si le bot ne fonctionne pas, adresse ton problème à cette adresse mail : 5-td-mtp@artfx.fr
 
-    [EN]🌏
-    Hello. If you have a problem with Silex or the Renderfarm, you can create a ticket that will automatically contact the {td_role_mention} team.
-    Click on the "Silex ticket" button if the problem is with flint.
-    Click on the "Farm ticket" button if the problem is on the renderfarm.
+[EN]🌏
+Hello. If you have a problem with Silex or the Renderfarm, you can create a ticket that will automatically contact the {td_role_mention} team.
+Click on the "Silex ticket" button if the problem is with flint.
+Click on the "Farm ticket" button if the problem is on the renderfarm.
 
-    If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.fr
-    """
+If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.fr
+"""
             view = CreateTicketView()
             await ticket_channel.send(content=message_content, view=view)
             await self.setup_hook()  # Appel à la méthode pour enregistrer la vue persistante
+
 
 # class used to display buttons in create ticket message with the function executed
 class CreateTicketView(View):
@@ -118,25 +119,25 @@ class CreateTicketView(View):
         # Create the new channel
         channel_name = f"{type}-ticket-{ticket_number:03}"
         overwrites = {
-            bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=False),
+            bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         ticket_channel = await category.create_text_channel(channel_name, overwrites=overwrites)
 
         # Send first message with buttons
         message_content = f"""
-    [FR]🥖
-    Salut {user_mention} ! Explique nous ton problème en rapport avec la/le {type}.
-    Donne nous le plus de détails possible pour nous aider à régler le problème (numéro du PC, ton numéro de salle, des screenshot/vidéos, quelles actions ont déclenchées ton problème etc.)
+[FR]🥖
+Salut {user_mention} ! Explique nous ton problème en rapport avec la/le {type}.
+Donne nous le plus de détails possible pour nous aider à régler le problème (numéro du PC, ton numéro de salle, des screenshot/vidéos, quelles actions ont déclenchées ton problème etc.)
 
-    La team {td_mention} revient vers toi au plus tôt!
+La team {td_mention} revient vers toi au plus tôt!
 
-    [EN]🌏
-    Hi {user_mention} ! Tell us about your problem with the {type}. 
-    Give us as many details as possible to help us fix the problem (PC number, your room number, screenshots/videos, what actions triggered your problem etc.).
+[EN]🌏
+Hi {user_mention} ! Tell us about your problem with the {type}. 
+Give us as many details as possible to help us fix the problem (PC number, your room number, screenshots/videos, what actions triggered your problem etc.).
 
-    The {td_mention} team will get back to you as soon as possible!
-    """
+The {td_mention} team will get back to you as soon as possible!
+"""
         view = TicketView(ticket_channel)
         await ticket_channel.send(message_content, view=view)
 
@@ -152,25 +153,60 @@ class TicketView(View):
         '''
         Button "Close Ticket". Execute function self.close_ticket when pushed.
         '''
-        await self.close_ticket(button)
+        await close_ticket(button)
 
     # TODO : button to archive somewhere the ticket's info
         
-    async def close_ticket(self, interaction):
-        '''
-        Function executed by button "Close Ticket". Remove current channel.
-        '''
-        if interaction.channel == self.channel:
-            # Delete channel
-            await interaction.channel.delete()
+async def close_ticket(ctx_or_interaction):
+    '''
+    Function executed by button "Close Ticket" and !close command. Remove current channel.
+    '''
+    if isinstance(ctx_or_interaction, commands.Context):  # If it's a command context
+        td_role = discord.utils.get(ctx_or_interaction.guild.roles, name="Technical Director")
+        if td_role in ctx_or_interaction.author.roles or ctx_or_interaction.author.guild_permissions.administrator:
+            # Vérifier si la commande est utilisée dans un channel ticket
+            if ctx_or_interaction.channel.name.startswith("pipeline-ticket-") or ctx_or_interaction.channel.name.startswith("farm-ticket-"):
+                # Supprimer le channel actuel
+                await ctx_or_interaction.channel.delete()
+            else:
+                await ctx_or_interaction.send("This command can only be used in ticket channels.")
         else:
-            # Not right channel
-            await interaction.response.send_message("This button can only be used in this ticket channel.", ephemeral=True)
+            await ctx_or_interaction.send("Vous n'avez pas la permission d'utiliser cette commande.")
+    else:  # If it's an interaction
+        td_role = discord.utils.get(ctx_or_interaction.guild.roles, name="Technical Director")
+        if td_role in ctx_or_interaction.user.roles or ctx_or_interaction.user.guild_permissions.administrator:
+            # Vérifier si la commande est utilisée dans un channel ticket
+            if ctx_or_interaction.channel.name.startswith("pipeline-ticket-") or ctx_or_interaction.channel.name.startswith("farm-ticket-"):
+                # Supprimer le channel actuel
+                await ctx_or_interaction.channel.delete()
+            else:
+                await ctx_or_interaction.send("This command can only be used in ticket channels.")
+        else:
+            await ctx_or_interaction.send("Vous n'avez pas la permission d'utiliser cette commande.")
+
 
 if __name__ == '__main__':
 
     bot = PersistentViewBot()
     bot.remove_command("help")  # Remove the default help command
 
+    @bot.command()
+    async def hello(ctx):
+        await ctx.send('Hello!')
+
+    @bot.command()
+    async def close(ctx):
+        """
+        # Vérifiez si l'auteur a le rôle "Technical Director" ou est administrateur
+        td_role = discord.utils.get(ctx.guild.roles, name="Technical Director")
+        if td_role in ctx.author.roles or ctx.author.guild_permissions.administrator:
+            # Supprimez le channel actuel
+            await ctx.channel.delete()
+        else:
+            await ctx.send("Vous n'avez pas la permission d'utiliser cette commande.")
+        """
+        await close_ticket(ctx)
+
+
     # run bot
-    bot.run('YOUR TOKEN HERE')
+    bot.run('MTE0Mzk4NDI2NjEyOTE5MDk4Mw.GOryrP.PmOJnyAwJYciu5dTcFYOvWlAmt9uy2Q02OLebU')
