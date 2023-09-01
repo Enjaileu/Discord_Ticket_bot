@@ -9,6 +9,7 @@ This will create another channel specific to the newly created ticket, where the
 import discord
 from discord.ext import commands
 from discord.ui import View
+from token import token
 
 class PersistentViewBot(commands.Bot):
     def __init__(self):
@@ -209,4 +210,4 @@ if __name__ == '__main__':
 
 
     # run bot
-    bot.run('MTE0Mzk4NDI2NjEyOTE5MDk4Mw.GOryrP.PmOJnyAwJYciu5dTcFYOvWlAmt9uy2Q02OLebU')
+    bot.run(token)
