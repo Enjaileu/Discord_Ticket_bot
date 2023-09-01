@@ -9,84 +9,101 @@ This will create another channel specific to the newly created ticket, where the
 import discord
 from discord.ext import commands
 from discord.ui import View
-import json
-import os
 
-# Set intents
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix='!', intents=intents)
-bot.remove_command("help")  # Remove the default help command
+class PersistentViewBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.all()
+        intents.message_content = True
+        super().__init__(command_prefix='!', intents=intents)
 
+    async def setup_hook(self) -> None:
+        # Register the persistent view for listening here.
+        self.add_view(CreateTicketView())
 
-# Obtenez le chemin absolu du répertoire du script
-script_directory = os.path.dirname(os.path.abspath(__file__))
-file_res_path = os.path.join(script_directory, "interactions.json")
-
-# Chargement des données d'interaction depuis un fichier JSON au démarrage du bot
-print(f"initial load of interactions")
-try:
-    with open("interactions.json", "r") as file:
-        interactions_data = json.load(file)
-except FileNotFoundError:
-    interactions_data = []
-
-# class used to display buttons in new ticket message
-class TicketView(View):
-    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, emoji = "🗑️") 
-    async def button_callback(self, button, interaction):
+    async def on_ready(self):
+        print(f'Logged in as {self.user} (ID: {self.user.id})')
         '''
-        Button "Close Ticket". Execute function self.close_ticket when pushed.
+        Execute when bot is run. 
+        Create category "HELP Pipeline/Renderfarm" if it not exists.
+        Create channel "create-ticket" in category "HELP Pipeline/Renderfarm" if it not exists. User can't send message in this channel.
+        Send a first message with button and explaination of the process.
         '''
-        await self.close_ticket(button)
+        print(f'Logged in as {bot.user.name}')
 
-    # TODO : button to archive in a .json the ticket info.
-        
-    async def close_ticket(self, interaction):
-        '''
-        Function executed by button "Close Ticket". Remove current channel.
-        '''
-        # Verify if interaction from a ticket channel
-        if isinstance(interaction.channel, discord.TextChannel) and "ticket" in interaction.channel.name:
-            # Delete channel
-            await interaction.channel.delete()
+        # Get category "HELP Pipeline/Renderfarm". Create it if not found.
+        category = discord.utils.get(bot.guilds[0].categories, name="HELP Pipeline/Renderfarm")
+        if not category:
+            category = await bot.guilds[0].create_category("HELP Pipeline/Renderfarm")
+
+        # Get td role mention
+        td_role = discord.utils.get(bot.guilds[0].roles, name="Technical Director")
+        if td_role:
+            td_role_mention = td_role.mention
         else:
-            # Not right channel
-            await interaction.response.send_message("This button can only be used in ticket channels.", ephemeral=True)
+            td_role_mention = "@Technical Director"  # Utilisation du texte brut si le rôle n'est pas trouvé
+        
+        # Create channel create-ticket
+        ticket_channel = discord.utils.get(category.channels, name="create-ticket")
+        if not ticket_channel:
+            overwrites = {
+                bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=False),
+                bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+            await category.create_text_channel("create-ticket", overwrites=overwrites)
+            ticket_channel = discord.utils.get(category.channels, name="create-ticket")
 
-        save_interactions_data()
+        # If channel create-ticket is empty, send first message.
+        async for message in ticket_channel.history(limit=1):
+            break
+        else:
+            message_content = f"""
+    [FR]🥖
+    Bonjour. Si tu as un problème avec Silex ou la Renderfarm, tu peux créer un ticket qui contactera automatiquement la team {td_role_mention}.
+    Clique sur le bouton "ticket Silex" si le problème est sur Silex.
+    Clique sur le bouton "ticket Farm" si le problème a lieu sur la Renderfarm.
+
+    Si le bot ne fonctionne pas, adresse ton problème à cette adresse mail : 5-td-mtp@artfx.fr
+
+    [EN]🌏
+    Hello. If you have a problem with Silex or the Renderfarm, you can create a ticket that will automatically contact the {td_role_mention} team.
+    Click on the "Silex ticket" button if the problem is with flint.
+    Click on the "Farm ticket" button if the problem is on the renderfarm.
+
+    If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.fr
+    """
+            view = CreateTicketView()
+            await ticket_channel.send(content=message_content, view=view)
+            await self.setup_hook()  # Appel à la méthode pour enregistrer la vue persistante
 
 # class used to display buttons in create ticket message with the function executed
 class CreateTicketView(View):
 
-    buttons_data = {
-        "Ticket Silex": {"type": "pipeline", "function_name": "first_button_callback"},
-        "Ticket Farm": {"type": "farm", "function_name": "second_button_callback"}
-    }
+    def __init__(self):
+        super().__init__(timeout=None)  # Définir le timeout à None pour la vue persistante
 
-    @discord.ui.button(label="Ticket Silex", style=discord.ButtonStyle.green, emoji = "🪨") 
+    @discord.ui.button(label="Ticket Silex", style=discord.ButtonStyle.green, emoji = "🪨", custom_id="ticket_silex") 
     async def first_button_callback(self, button, interaction):
         '''
         Button "Ticket Silex". Execute function self.create_ticket with type="pipeline" when pushed.
         '''
         user_mention = button.user.mention
-        user_id = button.user.id
         td = discord.utils.get(button.guild.roles, name="Technical Director")
         td_mention = td.mention
-        await self.create_ticket("pipeline", user_mention, user_id, td_mention)
+        await self.create_ticket("pipeline", user_mention, td_mention)
+        await button.response.defer()
 
-    @discord.ui.button(label="Ticket Farm", style=discord.ButtonStyle.secondary, emoji="🖥️")
+    @discord.ui.button(label="Ticket Farm", style=discord.ButtonStyle.secondary, emoji="🖥️", custom_id="ticket_farm")
     async def second_button_callback(self, button, interaction):
         '''
         button "Ticket Farm". Execute function self.create_ticket with type="farm" when pushed.
         '''
         user_mention = button.user.mention
-        user_id = button.user.id
         td = discord.utils.get(button.guild.roles, name="Technical Director")
         td_mention = td.mention
-        await self.create_ticket("farm", user_mention, user_id, td_mention)
+        await self.create_ticket("farm", user_mention, td_mention)
+        await button.response.defer()
 
-
-    async def create_ticket(self, type, user_mention, user_id, td_mention):
+    async def create_ticket(self, type, user_mention, td_mention):
 
         # Get category "HELP Pipeline/Renderfarm". Create it if not found.
         category = discord.utils.get(bot.guilds[0].categories, name="HELP Pipeline/Renderfarm")
@@ -120,122 +137,40 @@ class CreateTicketView(View):
 
     The {td_mention} team will get back to you as soon as possible!
     """
-        view = TicketView()
+        view = TicketView(ticket_channel)
         await ticket_channel.send(message_content, view=view)
 
-        button_info = self.buttons_data[self.children[0].label]  # Utilisez self.children[0] au lieu de self.view.children[0]
-        print(f"interaction in create ticket before append = {interactions_data}")
-        interactions_data.append({
-            "type": button_info["type"],
-            "function_name": button_info["function_name"],
-            "user_id": user_id,
-            "user_mention": user_mention,
-            "td_mention": td_mention,
-            "channel_name": channel_name
-        })
-        print(f"after = {interactions_data}")
-        save_interactions_data()
+# class used to display buttons in new ticket message
+class TicketView(View):
 
-# Fonction pour sauvegarder les données d'interaction dans un fichier JSON
-def save_interactions_data(interactions_data=None):
-    print(f"interactions to save : {interactions_data}")
+    def __init__(self, channel):
+        self.channel = channel
+        super().__init__(timeout=None)
 
-    try:
-        with open(file_res_path, 'w') as output_file:
-            content = json.dumps(interactions_data, indent=4)
-            output_file.write(content)
-    except Exception as e:
-        print(f"An error occurred while saving data: {e}")
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, emoji = "🗑️", custom_id="close_ticket") 
+    async def button_callback(self, button, interaction):
+        '''
+        Button "Close Ticket". Execute function self.close_ticket when pushed.
+        '''
+        await self.close_ticket(button)
 
-@bot.event
-async def on_ready():
-    '''
-    Execute when bot is run. 
-    Create category "HELP Pipeline/Renderfarm" if it not exists.
-    Create channel "create-ticket" in category "HELP Pipeline/Renderfarm" if it not exists. User can't send message in this channel.
-    Send a first message with button and explaination of the process.
-    '''
-    print(f'Logged in as {bot.user.name}')
+    # TODO : button to archive somewhere the ticket's info
+        
+    async def close_ticket(self, interaction):
+        '''
+        Function executed by button "Close Ticket". Remove current channel.
+        '''
+        if interaction.channel == self.channel:
+            # Delete channel
+            await interaction.channel.delete()
+        else:
+            # Not right channel
+            await interaction.response.send_message("This button can only be used in this ticket channel.", ephemeral=True)
 
-    # Get category "HELP Pipeline/Renderfarm". Create it if not found.
-    category = discord.utils.get(bot.guilds[0].categories, name="HELP Pipeline/Renderfarm")
-    if not category:
-        category = await bot.guilds[0].create_category("HELP Pipeline/Renderfarm")
+if __name__ == '__main__':
 
-     # Get td role mention
-    td_role = discord.utils.get(bot.guilds[0].roles, name="Technical Director")
-    if td_role:
-        td_role_mention = td_role.mention
-    else:
-        td_role_mention = "@Technical Director"  # Utilisation du texte brut si le rôle n'est pas trouvé
-    
-    # Create channel create-ticket
-    ticket_channel = discord.utils.get(category.channels, name="create-ticket")
-    if not ticket_channel:
-        overwrites = {
-            bot.guilds[0].default_role: discord.PermissionOverwrite(read_messages=False),
-            bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        await category.create_text_channel("create-ticket", overwrites=overwrites)
-        ticket_channel = discord.utils.get(category.channels, name="create-ticket")
+    bot = PersistentViewBot()
+    bot.remove_command("help")  # Remove the default help command
 
-    # Charger les interactions à partir du fichier JSON
-    try:
-        with open(file_res_path, "r") as file:
-            interactions_data = json.load(file)
-    except FileNotFoundError:
-        interactions_data = []
-
-    # Configurer les boutons avec les interactions chargées
-    ticket_view = CreateTicketView()
-    for interaction in interactions_data:
-        button_type = interaction["type"]
-        function_name = CreateTicketView.buttons_data[button_type]["function_name"]
-        function = getattr(ticket_view, function_name)
-
-        ticket_view.children[0].label = button_type
-        ticket_view.children[0].callback = function
-
-    # If channel create-ticket is empty, send first message.
-    async for message in ticket_channel.history(limit=1):
-        break
-    else:
-        message_content = f"""
-[FR]🥖
-Bonjour. Si tu as un problème avec Silex ou la Renderfarm, tu peux créer un ticket qui contactera automatiquement la team {td_role_mention}.
-Clique sur le bouton "ticket Silex" si le problème est sur Silex.
-Clique sur le bouton "ticket Farm" si le problème a lieu sur la Renderfarm.
-
-Si le bot ne fonctionne pas, adresse ton problème à cette adresse mail : 5-td-mtp@artfx.fr
-
-[EN]🌏
-Hello. If you have a problem with Silex or the Renderfarm, you can create a ticket that will automatically contact the {td_role_mention} team.
-Click on the "Silex ticket" button if the problem is with flint.
-Click on the "Farm ticket" button if the problem is on the renderfarm.
-
-If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.fr
-"""
-        view = CreateTicketView()
-        await ticket_channel.send(content=message_content, view=view)
-
-        # Initial interactions for "Ticket Silex" and "Ticket Farm"
-        interactions_data.append({
-            "type": "pipeline",  # type for "Ticket Silex"
-            "user_id": None,
-            "user_mention": None,
-            "td_mention": None,
-            "channel_name": None
-        })
-        interactions_data.append({
-            "type": "farm",  # type for "Ticket Farm"
-            "user_id": None,
-            "user_mention": None,
-            "td_mention": None,
-            "channel_name": None
-        })
-
-        print(f"before save, data = {interactions_data}")
-        save_interactions_data(interactions_data)
-
-# Replace "YOUR_TOKEN_HERE" by the token you copy from discord development website
-bot.run('MTE0Mzk4NDI2NjEyOTE5MDk4Mw.GOryrP.PmOJnyAwJYciu5dTcFYOvWlAmt9uy2Q02OLebU')
+    # run bot
+    bot.run('YOUR TOKEN HERE')
