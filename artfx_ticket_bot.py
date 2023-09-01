@@ -10,6 +10,8 @@ import discord
 from discord.ext import commands
 from discord.ui import View
 
+from token import token
+
 # Set intents
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -159,4 +161,4 @@ If the bot is not working, please explain your problem by mail : 5-td-mtp@artfx.
         await ticket_channel.send(content=message_content, view=view)
 
 # Replace "YOUR_TOKEN_HERE" by the token you copy from discord development website
-bot.run('MTE0Mzk4NDI2NjEyOTE5MDk4Mw.GOryrP.PmOJnyAwJYciu5dTcFYOvWlAmt9uy2Q02OLebU')
+bot.run(token)
